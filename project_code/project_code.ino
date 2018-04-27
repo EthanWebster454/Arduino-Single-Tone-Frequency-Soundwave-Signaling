@@ -1,115 +1,63 @@
-#include <Keypad.h>
+#include <math.h>
 
-const byte ROWS = 4;        //four rows
-const byte COLS = 3;        //three columns
-const byte NUM_CHARS = 12;  //number of characters
-const byte SPEAKER = 10;    //speaker pin
-const byte ANALOG_IN = A0;  //microphone pin
-const byte TONE_TIME = 200; //duration of each tone
-const byte THRESHOLD = 39;  //noise threshold above which a button press is assumed
+const byte NUM_CHARS = 12;    //number of characters
+const byte ANALOG_IN = A0;    //microphone pin
+const byte NUM_SAMPLES = 128; //number of samples for signal
 
+const byte THRESHOLD = 39;    //noise threshold above which a button press is assumed
+const double CERTAINTY = 0.0018;      //if any spectral magnitude of frequency band is > this, triggers output
+                                      //this is a second measure that is supposed to prevent false positives
+const int SAMPLING_FREQUENCY = 8000;  //according to Nyquist theorem, sampling rate must be twice maximum frequency
+const int SAMPLING_PERIOD = (int)(1000000*(1.0/SAMPLING_FREQUENCY)); //time in between taking samples
 
-const double CERTAINTY = 0.0018;  //if any spectral magnitude of frequency band is > this, triggers output
-                                  //this is a second measure that is supposed to prevent false positives
+unsigned int startTime;  //start time of sampling
+unsigned int endTime;    //end time of sampling
 
-byte rowPins[ROWS] = {8, 7, 6, 5}; //connect to the row pinouts of the keypad
-byte colPins[COLS] = {4, 3, 2}; //connect to the column pinouts of the keypad
+unsigned short signalSamples[NUM_SAMPLES]; //sampled input at A0
 
-//layout of the array of characters on the numerical keypad
-char keys[ROWS][COLS] = {
-  {'1','2','3'},
-  {'4','5','6'},
-  {'7','8','9'},
-  {'*','0','#'}
-};
-
-//create a keypad object for easy number detection
-Keypad keypad = Keypad( makeKeymap(keys), rowPins, colPins, ROWS, COLS );
-
-uint32_t startTime;  //start time of sampling
-uint32_t endTime;    //end time of sampling
-
-int16_t signalSamples[128]; //sampled input at A0
-
-double sampleFreq;  //sampling frequency (Hz)
 double result;      //current Fourier spectral magnitude
 double max_result;  //maximum Fourier spectral magnitude
 
-uint8_t maxI; //character/frequency index of maximum correlation
+byte maxI;  //character/frequency index of maximum correlation
 
+//discrete frequencies associated with keypad characters
 double frequencies[] = {1500, 1700, 1900, 2100, 2300, 2500, 2700, 2900, 3300, 3500, 3700, 3900};
 
-char charList[] = "*#0123456789";
+char charList[] = "*#0123456789"; //list of characters found on keypad
 
 /************* FUNCTION PROTOTYPES *************/
-
-double Single_Point_DFT(int16_t inputArray[], int, int, float, float);
-
-byte indexof(char *arr, char key)
-{  
-  for(int i = 0; i<NUM_CHARS; i++)
-  {
-    if(arr[i] == key)
-      return i;
-  }
-
-  return -1;
-}
+//computes the Discrete Fourier Transform of a sampled signal for a single frequency
+double singleFreqDFT(int16_t signalArray[], int, int, float);
 
 
 void setup(){
+
+  //initialize serial i/o
   Serial.begin(9600);
 
+  //setup I/O pins
   pinMode(ANALOG_IN, INPUT);
-  pinMode(SPEAKER, OUTPUT);
 }
 
 void loop() {
 
-  char key = keypad.getKey();
 
-  bool sound = false;
-
-  byte index;
-  
-  if (key){
-    index = indexof(charList, key);
-
-  tone(SPEAKER, frequencies[index], TONE_TIME); 
+  if(analogRead(ANALOG_IN) >= THRESHOLD) {
     
-  }
-
-  for (int i = 0; i<20; i++){
-
-    delayMicroseconds(500);
-
-    if(analogRead(ANALOG_IN) >= THRESHOLD) {
-      sound = true;
-      break;
-
-    }
-  }
-
-    if(sound) {
-    
-    startTime = micros();
-    
-    for(uint8_t n = 0; n<128; n++)
-    {
+    for(int n = 0; n<128; n++) {
+      
       signalSamples[n] = analogRead(ANALOG_IN);
+
+      delayMicroseconds(SAMPLING_PERIOD);
     }
-    
-    endTime = micros();
   
     max_result = 0;
   
     maxI = 0;
-  
-    sampleFreq = 128.0*1000000.0/(endTime - startTime);
     
     for (int i = 0; i < NUM_CHARS; i++){
   
-        result = Single_Point_DFT(signalSamples, 0, 127, sampleFreq, frequencies[i]);
+        result = singleFreqDFT(signalSamples, 0, NUM_SAMPLES-1, frequencies[i]);
   
         if(result > max_result) {
           
@@ -121,35 +69,51 @@ void loop() {
          
     }
 
-  if(max_result > CERTAINTY) {
+    if(max_result > CERTAINTY) {
 
-  Serial.print("You Pressed: ");
-  Serial.println(charList[maxI]); 
+      Serial.print("You pressed: ");
+      Serial.println(charList[maxI]); 
 
   
   }
 
 }
+
+delay(1);
   
 }
 
 
-double Single_Point_DFT(int16_t inputArray[], int startingIndex, int endingIndex, float sampleFreq, float freqToSampleFor){
-  double N = endingIndex - startingIndex + 1; //N=number of samples
-  double k = freqToSampleFor * N / sampleFreq; 
-  double radiansPerSample = 2.0 * 3.14159 * k / N;
+double singleFreqDFT(int16_t signalArray[],   //sampled signal
+                     int startingTime,        //starting time in microseconds
+                     int endingTime,          //ending time in microseconds
+                     float targetFrequency){  //frequency to compute DFT magnitude for
+    
+  double N = endingTime - startingTime + 1;             //find number of samples
+  double k = targetFrequency * N / SAMPLING_FREQUENCY;  //find ratio of target frequency to sampling frequency
+  double omega = 2.0 * M_PI * k / N;                    //find radians / num_samples
 
-  double RealSum = 0;
-  double ImaginarySum = 0;
-  for (int n = 0; n <= endingIndex - startingIndex; n++){
-    double angle = n * radiansPerSample;
-    double voltage = inputArray[startingIndex + n] * (5.0 / 1023.0);
+  double realPart = 0;        //real component of DFT, corresponding to cosine
+  double imaginaryPart = 0;   //imaginary component of DFT, corresponding to sine
+  double theta;               //current angle, in radians
+  double currV;               //current voltage
 
-    RealSum += voltage * cos(angle);
-    ImaginarySum -= voltage * sin(angle);
+  //iterate through samples
+  for (int n = 0; n <= endingTime - startingTime; n++){
+
+    //current angle is simply the index times the omega0
+    theta = n * omega;
+
+    //we need to convert the signal from Arduino reading to real voltage
+    currV = signalArray[startingTime + n] * (5.0 / 1023.0);
+
+    //find real and imaginary components of DFT
+    realPart += currV * cos(theta);
+    imaginaryPart -= currV * sin(theta);
   }
 
-  return (RealSum*RealSum + ImaginarySum*ImaginarySum) / N;
+  //find and return normalized Fourier magnitude of current sampled signal
+  return (realPart*realPart + imaginaryPart*imaginaryPart) / N;
 }
 
 
