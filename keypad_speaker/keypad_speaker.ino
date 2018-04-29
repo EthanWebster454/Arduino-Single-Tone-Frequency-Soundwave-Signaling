@@ -8,7 +8,7 @@ char charList[] = "*#0123456789"; //list of characters found on keypad
 const byte SPEAKER = 10;    //speaker pin
 const byte ROWS = 4;        //four rows
 const byte COLS = 3;        //three columns
-const byte TONE_TIME = 200; //duration of each tone
+const byte TONE_TIME = 150; //duration of each tone
 const byte NUM_CHARS = 12;  //number of characters on keypad
 
 byte rowPins[ROWS] = {8, 7, 6, 5};  //connect to the row pinouts of the keypad
