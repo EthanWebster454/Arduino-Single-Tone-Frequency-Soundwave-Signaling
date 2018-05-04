@@ -1,0 +1,7 @@
+1x Arduino Mega2560
+1x common Arduino-LiquidCrystal-library-compatible LCD screen
+1x 220 ohm resistor
+1x 10k ohm potentiometer
+1x LM393 microphone module with amplifier
+1x Membrane Keypad (adafruit)
+1x common speaker
